@@ -32,10 +32,26 @@ TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 
 def send_telegram(text):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        print("Telegram config missing, cannot send:", text)
         return
+
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TG_CHAT_ID, "text": text}
-    requests.post(url, json=payload, timeout=10)
+    try:
+        resp = requests.post(url, json=payload, timeout=15)
+        # debug logging for GitHub Actions output:
+        print("Telegram API URL:", url)
+        print("Payload:", payload)
+        print("Response status:", resp.status_code)
+        try:
+            print("Response body:", resp.json())
+        except Exception:
+            print("Response text:", resp.text)
+        if resp.status_code != 200:
+            print("Telegram send failed with status", resp.status_code)
+    except Exception as e:
+        print("Telegram send exception:", type(e).__name__, str(e))
+
 
 def within_market_hours():
     now = datetime.now(IST).time()
