@@ -2,7 +2,7 @@ name: Telegram Trading Bot
 
 on:
   schedule:
-    - cron: "*/1 * * * *"   # every 1 minute
+    - cron: "*/5 * * * *"   # every 5 minute
   workflow_dispatch:        # allow manual run from Actions tab
 
 jobs:
