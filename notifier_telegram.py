@@ -15,10 +15,10 @@ from volume_board_fast import (
 IST = pytz.timezone("Asia/Kolkata")
 
 MARKET_START = dt_time(9, 30)
-MARKET_END   = dt_time(15, 15)
+MARKET_END   = dt_time(15, 05)
 
-MAX_SYMBOLS = 500
-MIN_LTP = 10
+MAX_SYMBOLS = 1000
+MIN_LTP = 100
 MAX_LTP = 500
 MIN_CLOSE = 10
 MIN_VOLUME = 200_000
@@ -98,16 +98,16 @@ def main():
     # --- TEMP: always send a ping so we can test Telegram ---
     from datetime import datetime
     now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-    send_telegram(f"✅ Test ping from GitHub bot at {now_str}")
+    send_telegram(f"✅ Test ping from Karthik_Robot at {now_str}")
 
     # If you commented out within_market_hours earlier, leave it commented for now
     # After testing, you can re-enable the time filter.
     #
-    # if not within_market_hours():
-    #     return
+    if not within_market_hours():
+         return
 
     if not DHAN_TOKEN:
-        send_telegram("⚠️ DHAN_TOKEN missing in GitHub Secrets")
+        send_telegram("⚠️ Password missing in GitHub Secrets")
         return
 
     universe = load_universe_from_symbols(
