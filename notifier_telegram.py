@@ -14,8 +14,8 @@ from volume_board_fast import (
 # ===== CONFIG =====
 IST = pytz.timezone("Asia/Kolkata")
 
-MARKET_START = dt_time(21, 54)
-MARKET_END   = dt_time(22, 20)
+MARKET_START = dt_time(0, 0)
+MARKET_END   = dt_time(23, 59)
 
 MAX_SYMBOLS = 1000
 MIN_LTP = 100
