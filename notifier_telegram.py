@@ -42,7 +42,14 @@ def within_market_hours():
     return MARKET_START <= now <= MARKET_END
 
 def main():
-    # TEMP for testing:
+    # --- TEMP: always send a ping so we can test Telegram ---
+    from datetime import datetime
+    now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    send_telegram(f"✅ Test ping from GitHub bot at {now_str}")
+
+    # If you commented out within_market_hours earlier, leave it commented for now
+    # After testing, you can re-enable the time filter.
+    #
     # if not within_market_hours():
     #     return
 
