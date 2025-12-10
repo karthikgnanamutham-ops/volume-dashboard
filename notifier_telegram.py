@@ -52,6 +52,43 @@ def send_telegram(text):
     except Exception as e:
         print("Telegram send exception:", type(e).__name__, str(e))
 
+def build_signals_table(df_alerts):
+    """
+    Build a single text message with multiple signals in a table-style format.
+    Columns: Symbol | Price | RSI | Volume | Mode
+    """
+    if df_alerts.empty:
+        return None
+
+    # limit signals per message (optional)
+    df = df_alerts.copy().head(10)
+
+    lines = []
+    now_str = datetime.now(IST).strftime("%H:%M")
+    lines.append(f"⏱ 5m Signals {now_str}\n")
+
+    # header
+    header = f"{'SYMBOL':<8} {'PRICE':>8} {'RSI':>6} {'VOLUME':>12} {'MODE':>12}"
+    lines.append(header)
+    lines.append("-" * len(header))
+
+    for _, r in df.iterrows():
+        sym = str(r.get('Symbol', ''))[:8]
+        price_val = r.get('Last close')
+        rsi_val = r.get('RSI(14)')
+        vol_val = r.get('Last_5m_Volume')
+        mode = str(r.get('Final Mode', ''))
+
+        price = f"{price_val:.2f}" if pd.notna(price_val) else "NA"
+        rsi = f"{rsi_val:.1f}" if pd.notna(rsi_val) else "NA"
+        vol = f"{int(vol_val):,}" if pd.notna(vol_val) else "0"
+
+        line = f"{sym:<8} {price:>8} {rsi:>6} {vol:>12} {mode:>12}"
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 
 def within_market_hours():
     now = datetime.now(IST).time()
@@ -94,24 +131,15 @@ def main():
 
     df_ind = run_indicator_analysis(df_ok)
 
-    alerts = df_ind[df_ind["Final Mode"].isin([
+        alerts = df_ind[df_ind["Final Mode"].isin([
         "STRONG BUY", "BUY MODE", "SELL MODE", "STRONG SELL"
     ])]
 
     if alerts.empty:
         return
 
-    now_str = datetime.now(IST).strftime("%H:%M")
-
-    for _, r in alerts.head(3).iterrows():
-        msg = (
-            f"⏱ 5m Signal {now_str}\n\n"
-            f"Stock: {r['Company name']} ({r['Symbol']})\n"
-            f"Volume: {int(r['Last_5m_Volume']):,}\n"
-            f"Action: {r['Final Mode']}\n"
-            f"Trend: {r['Supertrend']}\n"
-            f"RSI: {r['RSI(14)']}"
-        )
+    msg = build_signals_table(alerts)
+    if msg:
         send_telegram(msg)
 
 if __name__ == "__main__":
