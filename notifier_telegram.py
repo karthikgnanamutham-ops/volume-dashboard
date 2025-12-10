@@ -103,8 +103,8 @@ def main():
     # If you commented out within_market_hours earlier, leave it commented for now
     # After testing, you can re-enable the time filter.
     #
-    if not within_market_hours():
-         return
+    #if not within_market_hours():
+    #     return
 
     if not DHAN_TOKEN:
         send_telegram("⚠️ Password missing in GitHub Secrets")
