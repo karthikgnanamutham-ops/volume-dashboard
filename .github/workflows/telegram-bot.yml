@@ -1,8 +1,14 @@
+# .github/workflows/telegram-bot.yml
+
 name: Telegram Trading Bot
 
 on:
+  # The 'schedule' block is correctly indented as a child of 'on'.
   schedule:
-    - cron: "*/1 * * * *"
+    # This list item defines the cron schedule.
+    - cron: "*/1 * * * *" 
+  
+  # The 'workflow_dispatch' trigger must be at the SAME indentation level as 'schedule'.
   workflow_dispatch:
 
 jobs:
