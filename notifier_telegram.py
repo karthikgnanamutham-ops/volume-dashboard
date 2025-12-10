@@ -42,8 +42,9 @@ def within_market_hours():
     return MARKET_START <= now <= MARKET_END
 
 def main():
-    if not within_market_hours():
-        return
+    # TEMP for testing:
+    # if not within_market_hours():
+    #     return
 
     if not DHAN_TOKEN:
         send_telegram("⚠️ DHAN_TOKEN missing in GitHub Secrets")
