@@ -131,7 +131,7 @@ def main():
 
     df_ind = run_indicator_analysis(df_ok)
 
-        alerts = df_ind[df_ind["Final Mode"].isin([
+    alerts = df_ind[df_ind["Final Mode"].isin([
         "STRONG BUY", "BUY MODE", "SELL MODE", "STRONG SELL"
     ])]
 
