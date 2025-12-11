@@ -473,6 +473,7 @@ def run_volume_filter_scan(
 # ========= CORE SCANNER PHASE 2: INDICATOR ANALYSIS =========
 def run_indicator_analysis(
     df_filtered: pd.DataFrame,
+    max_workers: int = 16,
 ) -> pd.DataFrame:
     """
     Phase 2: Takes the required symbols and calculates indicators,
@@ -506,9 +507,9 @@ def run_indicator_analysis(
         
         try:
             # Calculate all indicators
-            advanced = calculate_advanced_indicators(history_df, last_close)
+            advanced = calculate_advanced_indicators(history_df)
             pivot_levels = get_pivot_levels(history_df)
-            directionals = analyze_direction(history_df, last_close)
+            directionals = analyze_direction(history_df)
             supertrend_dir = calculate_supertrend(history_df)
         except Exception as e:
             return {
@@ -628,7 +629,7 @@ def run_indicator_analysis(
         }
 
     ok_list = df_filtered.to_dict('records')
-    with ThreadPoolExecutor(max_workers=8) as ex: 
+    with ThreadPoolExecutor(max_workers=max_workers) as ex: 
         futures = [ex.submit(indicator_worker, item) for item in ok_list]
         for fut in as_completed(futures):
             indicator_results.append(fut.result())
@@ -729,12 +730,12 @@ def main():
                 "HLC Direction (HH/HL or LL/LH)"
             ],
             "Points Added": [
-                "+2 / -2", 
-                "+2 / -2", 
-                "+1 / -1", 
-                "+1 / -1", 
-                "+1 / -1",
-                "+1 / -1"
+                "+3 / -3",  # VWAP
+                "+3 / -3",  # EMA stack
+                "+1 / -1",  # MACD
+                "+1 / -1",  # RSI zone
+                "+2 / -2",  # Supertrend
+                "+1 / -1",  # HLC pattern
             ]
         }
         st.table(pd.DataFrame(scoring_data))
