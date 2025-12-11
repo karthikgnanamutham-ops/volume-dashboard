@@ -473,9 +473,16 @@ def run_volume_filter_scan(
 # ========= CORE SCANNER PHASE 2: INDICATOR ANALYSIS =========
 def run_indicator_analysis(
     df_filtered: pd.DataFrame,
-    max_workers: int = 8,
 ) -> pd.DataFrame:
-    """Phase 2: Takes the required symbols and calculates indicators."""
+    """
+    Phase 2: Takes the required symbols and calculates indicators,
+    then applies a weighted scoring model to decide Final Mode.
+
+    The goal is HIGH PROBABILITY signals:
+      - Use strong weights for trend (VWAP, EMA stack, Supertrend)
+      - Use MACD / RSI / HLC as confirmation
+      - Go to NEUTRAL/WAIT whenever there is strong conflict.
+    """
     indicator_results = []
     
     if df_filtered.empty:
@@ -499,9 +506,9 @@ def run_indicator_analysis(
         
         try:
             # Calculate all indicators
-            advanced = calculate_advanced_indicators(history_df)
+            advanced = calculate_advanced_indicators(history_df, last_close)
             pivot_levels = get_pivot_levels(history_df)
-            directionals = analyze_direction(history_df)
+            directionals = analyze_direction(history_df, last_close)
             supertrend_dir = calculate_supertrend(history_df)
         except Exception as e:
             return {
@@ -512,59 +519,94 @@ def run_indicator_analysis(
                 "Resistance": None, "Support": None, "df": history_df 
             }
         
-        # --- Decision Logic (Scoring) ---
-        score = 0
+        # ----------------------------------------------------
+        # NEW WEIGHTED SCORING LOGIC
+        # ----------------------------------------------------
+        bull_score = 0
+        bear_score = 0
+        bull_signals = 0
+        bear_signals = 0
         
-        # 1. Price vs VWAP (Strongest)
-        if advanced['VWAP'] is not None and last_close is not None:
-            if last_close > advanced['VWAP']:
-                score += 2
-            elif last_close < advanced['VWAP']:
-                score -= 2
-
-        # 2. EMA Direction
-        if directionals['EMA_Direction'] == "BULLISH STACK":
-            score += 2
-        elif directionals['EMA_Direction'] == "BEARISH STACK":
-            score -= 2
+        # 1) Price vs VWAP (very strong)
+        if advanced["VWAP"] is not None:
+            if last_close > advanced["VWAP"]:
+                bull_score += 3
+                bull_signals += 1
+            elif last_close < advanced["VWAP"]:
+                bear_score += 3
+                bear_signals += 1
         
-        # 3. MACD Signal
-        if advanced['MACD_Signal'] == "CROSS UP":
-            score += 1
-        elif advanced['MACD_Signal'] == "CROSS DOWN":
-            score -= 1
-
-        # 4. RSI (Oversold/Overbought)
-        if advanced['RSI'] is not None:
-            if advanced['RSI'] > 60:
-                score += 1
-            elif advanced['RSI'] < 40:
-                score -= 1
-
-        # 5. Supertrend
+        # 2) EMA Direction (trend backbone)
+        ema_dir = directionals["EMA_Direction"]
+        if ema_dir == "BULLISH STACK":
+            bull_score += 3
+            bull_signals += 1
+        elif ema_dir == "BEARISH STACK":
+            bear_score += 3
+            bear_signals += 1
+        
+        # 3) Supertrend (strong trend filter)
         if supertrend_dir == "UPTREND":
-            score += 1
+            bull_score += 2
+            bull_signals += 1
         elif supertrend_dir == "DOWNTREND":
-            score -= 1
-
-        # 6. HLC (Micro-trend)
-        if directionals['HLC_Direction'] == "HH/HL (UP)":
-            score += 1
-        elif directionals['HLC_Direction'] == "LL/LH (DOWN)":
-            score -= 1
+            bear_score += 2
+            bear_signals += 1
         
-        # Final Mode Decision
-        if score >= 4:
-            final_mode = "STRONG BUY"
-        elif score >= 1:
-            final_mode = "BUY MODE"
-        elif score <= -4:
-            final_mode = "STRONG SELL"
-        elif score <= -1:
-            final_mode = "SELL MODE"
-        else:
+        # 4) MACD cross (confirmation)
+        macd_sig = advanced["MACD Signal"]
+        if macd_sig == "CROSS UP":
+            bull_score += 1
+            bull_signals += 1
+        elif macd_sig == "CROSS DOWN":
+            bear_score += 1
+            bear_signals += 1
+        
+        # 5) RSI zone (momentum / exhaustion)
+        rsi_val = advanced["RSI"]
+        if rsi_val is not None:
+            if rsi_val >= 55 and rsi_val <= 70:
+                # bullish but not extreme
+                bull_score += 1
+                bull_signals += 1
+            elif rsi_val <= 45 and rsi_val >= 30:
+                bear_score += 1
+                bear_signals += 1
+            # If RSI > 75 or < 25 -> too extreme; we don't add score, just note for later.
+        
+        # 6) HLC micro structure (HH/HL vs LL/LH)
+        hlc_dir = directionals["HLC_Direction"]
+        if hlc_dir == "HH/HL (UP)":
+            bull_score += 1
+            bull_signals += 1
+        elif hlc_dir == "LL/LH (DOWN)":
+            bear_score += 1
+            bear_signals += 1
+        
+        # Net score
+        net_score = bull_score - bear_score
+        
+        # ----------------------------------------------------
+        # FINAL MODE DECISION (conservative)
+        # ----------------------------------------------------
+        final_mode = "NEUTRAL/WAIT"
+        
+        # If both sides have multiple strong signals -> chop -> WAIT
+        if bull_signals >= 2 and bear_signals >= 2:
             final_mode = "NEUTRAL/WAIT"
-            
+        else:
+            # High conviction BUY / SELL zones
+            if net_score >= 6 and bull_score >= 7 and bear_signals <= 1:
+                final_mode = "STRONG BUY"
+            elif net_score <= -6 and bear_score >= 7 and bull_signals <= 1:
+                final_mode = "STRONG SELL"
+            elif net_score >= 3 and bull_score >= 5:
+                final_mode = "BUY MODE"
+            elif net_score <= -3 and bear_score >= 5:
+                final_mode = "SELL MODE"
+            else:
+                final_mode = "NEUTRAL/WAIT"
+        
         return {
             "Company name": name,
             "Symbol": symbol,
@@ -572,29 +614,31 @@ def run_indicator_analysis(
             "Last close": last_close,
             "Last_5m_Volume": row["Last_5m_Volume"],
             "Final Mode": final_mode,
-            "Score": score,
-            "VWAP": advanced['VWAP'],
-            "RSI(14)": advanced['RSI'],
-            "MACD Signal": advanced['MACD_Signal'],
+            "Score": net_score,
+            "VWAP": advanced["VWAP"],
+            "RSI(14)": advanced["RSI"],
+            "MACD Signal": advanced["MACD Signal"],
             "Supertrend": supertrend_dir,
-            "HLC Direction": directionals['HLC_Direction'],
-            "EMA Direction": directionals['EMA_Direction'],
-            "CPR": pivot_levels['CPR_C'],
-            "Resistance": pivot_levels['Resistance'],
-            "Support": pivot_levels['Support'],
-            "df": history_df 
+            "HLC Direction": hlc_dir,
+            "EMA Direction": ema_dir,
+            "CPR": pivot_levels["CPR_C"],
+            "Resistance": pivot_levels["Resistance"],
+            "Support": pivot_levels["Support"],
+            "df": history_df
         }
 
     ok_list = df_filtered.to_dict('records')
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+    with ThreadPoolExecutor(max_workers=8) as ex: 
         futures = [ex.submit(indicator_worker, item) for item in ok_list]
         for fut in as_completed(futures):
             indicator_results.append(fut.result())
 
     df_indicators = pd.DataFrame(indicator_results)
+    # Highest net bull_score (Score) at top
     df_indicators = df_indicators.sort_values(by='Score', ascending=False)
     
     return df_indicators
+
 
 
 # ========= SIMPLE BEEP (FIXED) =========
