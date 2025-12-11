@@ -1,9 +1,7 @@
 name: Telegram Trading Bot
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
-  workflow_dispatch:
+  workflow_dispatch:   # only manual/API trigger
 
 jobs:
   run-bot:
