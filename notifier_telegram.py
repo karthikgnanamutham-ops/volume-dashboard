@@ -20,8 +20,8 @@ MARKET_END   = dt_time(15, 15)
 MAX_SYMBOLS = 1000
 MIN_LTP = 100
 MAX_LTP = 500
-MIN_CLOSE = 10
-MIN_VOLUME = 200_000
+MIN_CLOSE = 100
+MIN_VOLUME = 100_000
 
 # Secrets from GitHub
 DHAN_TOKEN = os.environ.get("DHAN_TOKEN")
@@ -103,8 +103,8 @@ def main():
     # If you commented out within_market_hours earlier, leave it commented for now
     # After testing, you can re-enable the time filter.
     #
-    #if not within_market_hours():
-    #     return
+    if not within_market_hours():
+         return
 
     if not DHAN_TOKEN:
         send_telegram("⚠️ Password missing in GitHub Secrets")
