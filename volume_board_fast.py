@@ -1,5 +1,4 @@
 # volume_board_fast.py
-
 import time
 import base64
 from datetime import datetime, time as dt_time, timedelta
@@ -149,19 +148,24 @@ def fetch_candle_data(
     }
     body = {
         "securityId": str(security_id),
-        "exchangeSegment": "NSE_EQ",               # <— important
-        "instrument": DEFAULT_INSTRUMENT,          # "EQUITY"
-        "interval": str(DEFAULT_INTRADAY_INTERVAL),# "5"
+        "exchangeSegment": "NSE_EQ",
+        "instrument": DEFAULT_INSTRUMENT,
+        "interval": str(DEFAULT_INTRADAY_INTERVAL),
         "oi": False,
         "fromDate": from_str,
         "toDate": to_str,
     }
 
-    try:
-        r = requests.post(url, headers=headers, json=body, timeout=10)
-        r.raise_for_status()
-    except Exception:
-        return None
+    # Retry with small backoff
+    for attempt in range(3):
+        try:
+            r = requests.post(url, headers=headers, json=body, timeout=10)
+            r.raise_for_status()
+            break
+        except Exception:
+            if attempt == 2:
+                return None
+            time.sleep(0.6 * (attempt + 1))
 
     data = r.json() or {}
 
@@ -224,8 +228,6 @@ def fetch_candle_data(
         "Volume": int(last.get("volume")),
         "df": df,
     }
-
-
 
 # ========= HELPER: S&R ESTIMATION & CPR =========
 def get_pivot_levels(df: pd.DataFrame) -> dict:
@@ -350,18 +352,24 @@ def calculate_supertrend(df: pd.DataFrame) -> str:
 def calculate_advanced_indicators(df: pd.DataFrame) -> dict:
     """
     Calculates required indicators (RSI, VWAP, MACD)
+    Defensive: returns safe defaults on insufficient data.
     """
-    
+    if df is None or df.empty:
+        return {"VWAP": None, "MACD": None, "MACD_Signal_Line": None, "MACD_Signal": "WAIT", "RSI": None}
+
     df['Close'] = pd.to_numeric(df['close'], errors='coerce')
     df['High'] = pd.to_numeric(df['high'], errors='coerce')
     df['Low'] = pd.to_numeric(df['low'], errors='coerce')
-    df['Volume'] = pd.to_numeric(df['volume'], errors='coerce')
+    df['Volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
     
-    # --- 1. VWAP Proxy ---
-    df['TP'] = (df['High'] + df['Low'] + df['Close']) / 3
-    df['TPV'] = df['TP'] * df['Volume']
-    df['VWAP'] = df['TPV'].cumsum() / df['Volume'].cumsum()
-    last_vwap = df['VWAP'].iloc[-1]
+    # --- 1. VWAP Proxy --- (defensive to division by zero)
+    if df['Volume'].sum() == 0:
+        last_vwap = None
+    else:
+        df['TP'] = (df['High'] + df['Low'] + df['Close']) / 3
+        df['TPV'] = df['TP'] * df['Volume']
+        df['VWAP'] = df['TPV'].cumsum() / df['Volume'].cumsum()
+        last_vwap = df['VWAP'].iloc[-1] if not df['VWAP'].isna().all() else None
 
     # --- 2. MACD Calculation ---
     if len(df) >= MACD_SLOW + MACD_SIGNAL:
@@ -400,7 +408,6 @@ def calculate_advanced_indicators(df: pd.DataFrame) -> dict:
         "MACD_Signal": "CROSS UP" if macd_signal_status is True else "CROSS DOWN" if macd_signal_status is False else "WAIT",
         "RSI": round(last_rsi, 2) if last_rsi is not None else None
     }
-
 
 # ========= CORE SCANNER PHASE 1: VOLUME FILTERING =========
 def run_volume_filter_scan(
@@ -469,7 +476,6 @@ def run_volume_filter_scan(
     
     return df
 
-
 # ========= CORE SCANNER PHASE 2: INDICATOR ANALYSIS =========
 def run_indicator_analysis(
     df_filtered: pd.DataFrame,
@@ -500,6 +506,7 @@ def run_indicator_analysis(
             return {
                 "Company name": name, "Symbol": symbol, "Time": row["Time"], "Last close": last_close,
                 "Last_5m_Volume": row["Last_5m_Volume"], "Final Mode": "NO DATA", "Score": -99,
+                "Bull Score": None, "Bear Score": None,
                 "HLC Direction": "N/A", "EMA Direction": "N/A", "VWAP": None, "RSI(14)": None, 
                 "MACD Signal": "N/A", "Supertrend": "N/A", "CPR": None, 
                 "Resistance": None, "Support": None, "df": history_df 
@@ -515,6 +522,7 @@ def run_indicator_analysis(
             return {
                 "Company name": name, "Symbol": symbol, "Time": row["Time"], "Last close": last_close,
                 "Last_5m_Volume": row["Last_5m_Volume"], "Final Mode": f"CALC ERROR: {e.__class__.__name__}", "Score": -99,
+                "Bull Score": None, "Bear Score": None,
                 "HLC Direction": "N/A", "EMA Direction": "N/A", "VWAP": None, "RSI(14)": None, 
                 "MACD Signal": "N/A", "Supertrend": "N/A", "CPR": None, 
                 "Resistance": None, "Support": None, "df": history_df 
@@ -529,16 +537,20 @@ def run_indicator_analysis(
         bear_signals = 0
         
         # 1) Price vs VWAP (very strong)
-        if advanced["VWAP"] is not None:
-            if last_close > advanced["VWAP"]:
-                bull_score += 3
-                bull_signals += 1
-            elif last_close < advanced["VWAP"]:
-                bear_score += 3
-                bear_signals += 1
+        if advanced.get("VWAP") is not None:
+            try:
+                vwap_val = float(advanced["VWAP"])
+                if last_close > vwap_val:
+                    bull_score += 3
+                    bull_signals += 1
+                elif last_close < vwap_val:
+                    bear_score += 3
+                    bear_signals += 1
+            except Exception:
+                pass
         
         # 2) EMA Direction (trend backbone)
-        ema_dir = directionals["EMA_Direction"]
+        ema_dir = directionals.get("EMA_Direction", "N/A")
         if ema_dir == "BULLISH STACK":
             bull_score += 3
             bull_signals += 1
@@ -555,7 +567,7 @@ def run_indicator_analysis(
             bear_signals += 1
         
         # 4) MACD cross (confirmation)
-        macd_sig = advanced["MACD Signal"]
+        macd_sig = advanced.get("MACD_Signal", "WAIT")
         if macd_sig == "CROSS UP":
             bull_score += 1
             bull_signals += 1
@@ -564,19 +576,22 @@ def run_indicator_analysis(
             bear_signals += 1
         
         # 5) RSI zone (momentum / exhaustion)
-        rsi_val = advanced["RSI"]
+        rsi_val = advanced.get("RSI")
         if rsi_val is not None:
-            if rsi_val >= 55 and rsi_val <= 70:
-                # bullish but not extreme
-                bull_score += 1
-                bull_signals += 1
-            elif rsi_val <= 45 and rsi_val >= 30:
-                bear_score += 1
-                bear_signals += 1
-            # If RSI > 75 or < 25 -> too extreme; we don't add score, just note for later.
+            try:
+                rsi_val = float(rsi_val)
+                if 55 <= rsi_val <= 70:
+                    # bullish but not extreme
+                    bull_score += 1
+                    bull_signals += 1
+                elif 30 <= rsi_val <= 45:
+                    bear_score += 1
+                    bear_signals += 1
+            except Exception:
+                pass
         
         # 6) HLC micro structure (HH/HL vs LL/LH)
-        hlc_dir = directionals["HLC_Direction"]
+        hlc_dir = directionals.get("HLC_Direction", "N/A")
         if hlc_dir == "HH/HL (UP)":
             bull_score += 1
             bull_signals += 1
@@ -616,31 +631,33 @@ def run_indicator_analysis(
             "Last_5m_Volume": row["Last_5m_Volume"],
             "Final Mode": final_mode,
             "Score": net_score,
-            "VWAP": advanced["VWAP"],
-            "RSI(14)": advanced["RSI"],
-            "MACD Signal": advanced["MACD Signal"],
+            "Bull Score": bull_score,
+            "Bear Score": bear_score,
+            "VWAP": advanced.get("VWAP"),
+            "RSI(14)": advanced.get("RSI"),
+            "MACD Signal": advanced.get("MACD_Signal"),
             "Supertrend": supertrend_dir,
             "HLC Direction": hlc_dir,
             "EMA Direction": ema_dir,
-            "CPR": pivot_levels["CPR_C"],
-            "Resistance": pivot_levels["Resistance"],
-            "Support": pivot_levels["Support"],
+            "CPR": pivot_levels.get("CPR_C"),
+            "Resistance": pivot_levels.get("Resistance"),
+            "Support": pivot_levels.get("Support"),
             "df": history_df
         }
 
     ok_list = df_filtered.to_dict('records')
-    with ThreadPoolExecutor(max_workers=max_workers) as ex: 
+    workers = min(max_workers, max(1, len(ok_list)))
+    with ThreadPoolExecutor(max_workers=workers) as ex: 
         futures = [ex.submit(indicator_worker, item) for item in ok_list]
         for fut in as_completed(futures):
             indicator_results.append(fut.result())
 
     df_indicators = pd.DataFrame(indicator_results)
     # Highest net bull_score (Score) at top
-    df_indicators = df_indicators.sort_values(by='Score', ascending=False)
+    if 'Score' in df_indicators.columns:
+        df_indicators = df_indicators.sort_values(by='Score', ascending=False)
     
     return df_indicators
-
-
 
 # ========= SIMPLE BEEP (FIXED) =========
 BEEP_WAV_BASE64 = (
@@ -885,10 +902,13 @@ def main():
     with col1:
         st.metric("DECISION", top_symbol['Final Mode'])
         st.metric("Score", top_symbol['Score'])
+        # show bull/bear for clarity
+        if 'Bull Score' in top_symbol and 'Bear Score' in top_symbol:
+            st.metric("Bull / Bear", f"{top_symbol.get('Bull Score','N/A')} / {top_symbol.get('Bear Score','N/A')}")
     
     with col2:
         st.metric("Last Close Price", safe_format(top_symbol['Last close']))
-        st.metric("Last 5m Volume", safe_format(top_symbol['Last_5m_Volume'], prefix="", fmt=","))
+        st.metric("Last 5m Volume", safe_format(top_symbol['Last_5m_Volume'], prefix="", fmt=",")) 
         
     with col3:
         st.metric("VWAP Level", safe_format(top_symbol['VWAP']))
