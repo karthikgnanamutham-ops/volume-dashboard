@@ -54,41 +54,43 @@ def send_telegram(text):
 
 def build_signals_table(df_alerts):
     """
-    Build a single text message with multiple signals in a table-style format.
-    Columns: Symbol | Price | RSI | Volume | Mode
+    Build a clean, mobile-friendly Telegram message.
+    Format:
+
+    ⏱ 5m Signals 14:18
+
+    COMPANY NAME
+    Price | RSI | Volume | MODE
     """
+
     if df_alerts.empty:
         return None
 
-    # limit signals per message (optional)
     df = df_alerts.copy().head(10)
 
     lines = []
     now_str = datetime.now(IST).strftime("%H:%M")
     lines.append(f"⏱ 5m Signals {now_str}\n")
 
-    # header
-    header = f"{'SYMBOL':<8} {'PRICE':>8} {'RSI':>6} {'VOLUME':>12} {'MODE':>12}"
-    lines.append(header)
-    lines.append("-" * len(header))
-
     for _, r in df.iterrows():
-        sym = str(r.get('Symbol', ''))[:8]
-        price_val = r.get('Last close')
-        rsi_val = r.get('RSI(14)')
-        vol_val = r.get('Last_5m_Volume')
-        mode = str(r.get('Final Mode', ''))
+        company = str(r.get("Company name", r.get("Symbol", ""))).strip()
+
+        price_val = r.get("Last close")
+        rsi_val = r.get("RSI(14)")
+        vol_val = r.get("Last_5m_Volume")
+        mode = str(r.get("Final Mode", ""))
 
         price = f"{price_val:.2f}" if pd.notna(price_val) else "NA"
         rsi = f"{rsi_val:.1f}" if pd.notna(rsi_val) else "NA"
         vol = f"{int(vol_val):,}" if pd.notna(vol_val) else "0"
 
-        line = f"{sym:<8} {price:>8} {rsi:>6} {vol:>12} {mode:>12}"
-        lines.append(line)
+        # Company name on first line
+        lines.append(company)
+
+        # Metrics on next line
+        lines.append(f"{price} | {rsi} | {vol} | {mode}\n")
 
     return "\n".join(lines)
-
-
 
 def within_market_hours():
     now = datetime.now(IST).time()
